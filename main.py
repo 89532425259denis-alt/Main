@@ -12,7 +12,7 @@ app = Flask(__name__)
 CORS(app)
 
 # ============================================================
-# KEEP-ALIVE
+# KEEP-ALIVE (пинг каждые 10 минут)
 # ============================================================
 def keep_alive():
     while True:
@@ -29,27 +29,16 @@ threading.Thread(target=keep_alive, daemon=True).start()
 # ============================================================
 # COOKIES (для обхода "Sign in to confirm")
 # ============================================================
-# Простой способ: передаем cookies через заголовки
-# Более надежный: использовать файл cookies.txt
-
-# Вариант 1: Прямая передача cookies (экспортируйте из браузера)
-# Вставьте свои cookies из расширения "Get cookies.txt LOCALLY"
-# Формат: name=value; name2=value2
-COOKIES_STRING = os.environ.get('YOUTUBE_COOKIES', '')
-
-# Вариант 2: Использовать cookies-файл (если есть)
-# Положите файл cookies.txt в папку с приложением
-COOKIES_FILE = 'cookies.txt'
-
 def get_cookies():
-    """Возвращает cookies для yt-dlp"""
-    # Если есть cookies-строка из переменной окружения
-    if COOKIES_STRING:
-        return COOKIES_STRING
+    """Возвращает cookies из переменной окружения или файла"""
+    # Вариант 1: Из переменной окружения
+    cookies_str = os.environ.get('YOUTUBE_COOKIES', '')
+    if cookies_str:
+        return cookies_str
     
-    # Если есть файл cookies.txt
-    if os.path.exists(COOKIES_FILE):
-        with open(COOKIES_FILE, 'r') as f:
+    # Вариант 2: Из файла
+    if os.path.exists('cookies.txt'):
+        with open('cookies.txt', 'r') as f:
             return f.read().strip()
     
     return None
@@ -74,7 +63,7 @@ def get_info():
         return jsonify({'error': 'No URL'}), 400
     
     try:
-        # Базовые опции yt-dlp
+        # Опции yt-dlp с поддержкой cookies
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
@@ -91,12 +80,9 @@ def get_info():
         # Добавляем cookies если есть
         cookies = get_cookies()
         if cookies:
-            # Для yt-dlp используем --cookies
-            ydl_opts['cookiefile'] = cookies if os.path.exists(cookies) else None
-            # Или добавляем в заголовки
             ydl_opts['http_headers']['Cookie'] = cookies
         
-        # Добавляем параметры для обхода ограничений
+        # Параметры для обхода ограничений YouTube
         ydl_opts['extractor_args'] = {
             'youtube': {
                 'player_client': ['android', 'web'],
@@ -133,10 +119,9 @@ def get_info():
         error_msg = str(e)
         print(f"❌ Ошибка: {error_msg}")
         
-        # Если ошибка "Sign in" — подсказываем решение
         if "sign in" in error_msg.lower() or "bot" in error_msg.lower():
             return jsonify({
-                'error': 'YouTube требует подтверждения. Добавьте cookies. Инструкция: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp'
+                'error': 'YouTube требует подтверждения. Добавьте cookies в переменную YOUTUBE_COOKIES'
             }), 403
         
         return jsonify({'error': error_msg}), 500
