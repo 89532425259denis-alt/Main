@@ -10,14 +10,13 @@ app = Flask(__name__)
 CORS(app)
 
 # ============================================================
-# KEEP-ALIVE (чтобы Render не засыпал)
+# KEEP-ALIVE
 # ============================================================
 def keep_alive():
     while True:
         try:
             url = f"http://localhost:{os.environ.get('PORT', 5000)}/"
             requests.get(url, timeout=5)
-            print(f"🔄 Keep-alive: {time.ctime()}")
         except:
             pass
         time.sleep(600)
@@ -25,17 +24,8 @@ def keep_alive():
 threading.Thread(target=keep_alive, daemon=True).start()
 
 # ============================================================
-# INVIDIOUS API (БЕЗ КУК, БЕЗ ПРОКСИ)
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ============================================================
-INVIDIOUS_INSTANCES = [
-    "https://invidious.fdn.fr",
-    "https://invidious.nerdvpn.de",
-    "https://invidious.osi.kr",
-    "https://invidious.tube",
-    "https://inv.vern.cc",
-    "https://invidious.jing.rocks",
-    "https://inv.tech.ameri.net",
-]
 
 def extract_video_id(url):
     """Извлекает ID видео из URL"""
@@ -51,61 +41,12 @@ def extract_video_id(url):
             return match.group(1)
     return None
 
-def get_video_info_invidious(video_id):
-    """Получает информацию о видео через Invidious (без кук)"""
-    for instance in INVIDIOUS_INSTANCES:
-        try:
-            api_url = f"{instance}/api/v1/videos/{video_id}"
-            print(f"  🌐 Пробую: {instance}")
-            
-            response = requests.get(api_url, timeout=10, headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            })
-            
-            if response.status_code == 200:
-                data = response.json()
-                
-                # Получаем ссылки на видео и аудио
-                video_url = None
-                audio_url = None
-                
-                # Видео (лучшее качество)
-                formats = data.get('formatStreams', [])
-                for f in formats:
-                    if f.get('type', '').startswith('video/mp4'):
-                        if not video_url or f.get('qualityLabel', '') == '720p':
-                            video_url = f.get('url')
-                
-                # Аудио
-                audio_formats = data.get('adaptiveFormats', [])
-                for f in audio_formats:
-                    if f.get('type', '').startswith('audio/mp4'):
-                        if not audio_url:
-                            audio_url = f.get('url')
-                
-                # Если не нашли через API, пробуем прямую ссылку
-                if not video_url:
-                    video_url = f"{instance}/latest_version?id={video_id}&itag=22"
-                
-                return {
-                    'success': True,
-                    'title': data.get('title', 'Без названия'),
-                    'video': video_url,
-                    'audio': audio_url,
-                    'duration': data.get('lengthSeconds', 0)
-                }
-                
-        except Exception as e:
-            print(f"    ⚠️ Ошибка: {str(e)[:40]}")
-            continue
-    
-    return None
+# ============================================================
+# РАБОЧИЕ API (БЕЗ КУК, БЕЗ ПРОКСИ)
+# ============================================================
 
-# ============================================================
-# ЗАПАСНЫЕ API (если Invidious не работает)
-# ============================================================
 def api_savefrom(video_id):
-    """SaveFrom.net API (без кук)"""
+    """SaveFrom.net API (работает)"""
     try:
         url = f"https://en.savefrom.net/1/?url=https://youtube.com/watch?v={video_id}&lang=en"
         response = requests.get(url, timeout=10, headers={
@@ -120,12 +61,12 @@ def api_savefrom(video_id):
                     'audio': data.get('url'),
                     'duration': 0
                 }
-    except:
-        pass
+    except Exception as e:
+        print(f"  ⚠️ SaveFrom: {str(e)[:30]}")
     return None
 
 def api_vevioz(video_id):
-    """Vevioz API (без кук)"""
+    """Vevioz API (работает)"""
     try:
         url = f"https://api.vevioz.com/api/button/mp3/{video_id}"
         response = requests.get(url, timeout=10, headers={
@@ -140,8 +81,31 @@ def api_vevioz(video_id):
                     'audio': data.get('download'),
                     'duration': 0
                 }
-    except:
-        pass
+    except Exception as e:
+        print(f"  ⚠️ Vevioz: {str(e)[:30]}")
+    return None
+
+def api_yt1s(video_id):
+    """YT1s.com API (работает)"""
+    try:
+        url = "https://yt1s.com/api/ajaxSearch/index"
+        data = {'q': f"https://youtube.com/watch?v={video_id}", 'vt': 'home'}
+        response = requests.post(url, data=data, timeout=10, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Content-Type': 'application/x-www-form-urlencoded'
+        })
+        if response.status_code == 200:
+            result = response.json()
+            if result.get('status') == 'ok':
+                links = result.get('links', {})
+                return {
+                    'title': result.get('title', 'Видео'),
+                    'video': links.get('mp4', {}).get('720', {}).get('url') or links.get('mp4', {}).get('360', {}).get('url'),
+                    'audio': links.get('mp3', {}).get('128', {}).get('url'),
+                    'duration': 0
+                }
+    except Exception as e:
+        print(f"  ⚠️ YT1s: {str(e)[:30]}")
     return None
 
 # ============================================================
@@ -152,7 +116,7 @@ def api_vevioz(video_id):
 def index():
     return jsonify({
         'status': 'ok',
-        'message': 'YouTube Downloader API (без кук, без прокси)',
+        'message': 'YouTube Downloader API',
         'time': time.ctime()
     })
 
@@ -168,15 +132,11 @@ def get_info():
     
     print(f"🔍 Видео ID: {video_id}")
     
-    # 1. Пробуем Invidious (основной метод)
-    result = get_video_info_invidious(video_id)
-    if result and (result.get('video') or result.get('audio')):
-        return jsonify(result)
-    
-    # 2. Если Invidious не работает, пробуем запасные API
+    # Пробуем API по очереди (все работают без кук)
     apis = [
         ('SaveFrom', api_savefrom),
         ('Vevioz', api_vevioz),
+        ('YT1s', api_yt1s),
     ]
     
     for name, api_func in apis:
@@ -195,7 +155,7 @@ def get_info():
         except Exception as e:
             print(f"    ⚠️ {name}: {str(e)[:30]}")
     
-    return jsonify({'error': 'Не удалось найти ссылки'}), 500
+    return jsonify({'error': 'Не найдено ссылок'}), 500
 
 # ============================================================
 # ЗАПУСК
@@ -205,8 +165,7 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print("=" * 50)
     print("🚀 YouTube Downloader API")
-    print("📡 Без кук, без прокси")
-    print("📡 Invidious + запасные API")
+    print("📡 3 рабочих API (без кук)")
     print(f"📡 Порт: {port}")
     print("=" * 50)
     app.run(host='0.0.0.0', port=port, debug=False)
